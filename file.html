@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GeoShield AI — Browser Prototype</title>
+<style>
+  body, html {
+    margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif;
+    background: #121212;
+    color: #eee;
+    display: flex;
+    overflow: hidden;
+  }
+  #map {
+    flex: 2;
+    height: 100vh;
+  }
+  #assistant {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #1f1f1f;
+    padding: 12px 16px;
+    box-sizing: border-box;
+  }
+  #chatLog {
+    flex-grow: 1;
+    overflow-y: auto;
+    border: 1px solid #555;
+    background: #181818;
+    padding: 12px;
+    margin-bottom: 12px;
+    white-space: pre-wrap;
+    font-size: 14px;
+    border-radius: 6px;
+  }
+  #userInput {
+    display: flex;
+  }
+  #inputBox {
+    flex-grow: 1;
+    padding: 12px;
+    background: #222;
+    border: none;
+    color: #eee;
+    font-size: 15px;
+    border-radius: 4px 0 0 4px;
+  }
+  #sendBtn {
+    padding: 12px 18px;
+    background: #0a84ff;
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 15px;
+    border-radius: 0 4px 4px 0;
+    transition: background 0.2s;
+  }
+  #sendBtn:hover {
+    background: #0066cc;
+  }
+  button.promptBtn {
+    background: #333;
+    border: none;
+    color: #ccc;
+    padding: 6px 12px;
+    margin: 2px 4px 12px 0;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  button.promptBtn:hover {
+    background: #555;
+  }
+  .infoPanel {
+    background: #2c2c2c;
+    padding: 10px 14px;
+    margin-top: 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  h2 {
+    margin: 0 0 12px 0;
+  }
+  a.layerToggle {
+    background: #0a84ff;
+    color: white;
+    padding: 6px 10px;
+    margin-bottom: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 13px;
+    display: inline-block;
+  }
+  a.layerToggle.active {
+    background: #005bb5;
+  }
+  .card-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .risk-card {
+    background: #252525;
+    padding: 10px 16px;
+    border-radius: 6px;
+    min-width: 120px;
+    text-align: center;
+  }
+  .risk-card strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13px;
+    color: #99ccff;
+  }
+  .risk-card .value {
+    font-size: 18px;
+    color: #d9d9d9;
+  }
+</style>
+<!-- Leaflet CSS -->
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  crossorigin=""
+/>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="assistant">
+  <h2>GeoShield AI Assistant</h2>
+  <div id="suggestedPrompts">
+    <button class="promptBtn" onclick="askAI('Which areas have the highest flood risk?')">Highest flood risk areas</button>
+    <button class="promptBtn" onclick="askAI('Show me the top population exposed zones')">Top population exposed</button>
+    <button class="promptBtn" onclick="askAI('Compare Zone A and Zone B')">Compare Zone A and Zone B</button>
+    <button class="promptBtn" onclick="askAI('Why is Zone A high risk?')">Why is Zone A high risk?</button>
+    <button class="promptBtn" onclick="askAI('Generate a risk summary for the region')">Generate risk summary</button>
+  </div>
+  <div id="chatLog" aria-live="polite" role="log"></div>
+  <div id="userInput">
+    <input id="inputBox" type="text" placeholder="Ask anything about hazard & risk..." aria-label="User question" />
+    <button id="sendBtn" aria-label="Send question">Send</button>
+  </div>
+  <div id="locationInfo" class="infoPanel" style="display:none;"></div>
+  <div id="riskCards" class="card-row"></div>
+</div>
+
+<!-- Leaflet JS -->
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  crossorigin=""
+></script>
+
+<script>
+// --------- DEMO DATA -----------
+
+const floodZones = [
+  {
+    id: 'ZoneA', name: 'Zone A', risk: 'High', riskScore: 85, population: 15000,
+    buildings: 1200, roads: 15, agriculture: 40, infrastructure: 5, area: 25,
+    coords: [[12.75,79.9],[12.7,79.95],[12.65,79.9],[12.7,79.85]]
+  },
+  {
+    id: 'ZoneB', name: 'Zone B', risk: 'Moderate', riskScore: 62, population: 8000,
+    buildings: 600, roads: 8, agriculture: 20, infrastructure: 2, area: 30,
+    coords: [[12.85,79.8],[12.9,79.85],[12.88,79.9],[12.82,79.85]]
+  },
+  {
+    id: 'ZoneC', name: 'Zone C', risk: 'Low', riskScore: 30, population: 5000,
+    buildings: 300, roads: 4, agriculture: 12, infrastructure: 1, area: 40,
+    coords: [[12.65,79.75],[12.6,79.8],[12.55,79.75],[12.6,79.7]]
+  }
+];
+
+const landslideZones = [
+  {
+    id: 'Zone1', name: 'Hill Area 1', susceptibility: 'Very High', suscScore: 90,
+    slope: 45, rainfallIntensity: 120, landUse: 'Forest',
+    factors: { slope: 25, rainfall: 20, landUse: 15, elevation: 10,
+               drainage: 10, roadDistance: 10, lithology: 5, aspect: 5 },
+    coords: [[12.78,79.87],[12.83,79.93],[12.8,79.98],[12.75,79.92]]
+  },
+  {
+    id: 'Zone2', name: 'Hill Area 2', susceptibility: 'Moderate', suscScore: 50,
+    slope: 20, rainfallIntensity: 80, landUse: 'Agriculture',
+    factors: { slope: 15, rainfall: 15, landUse: 20, elevation: 20,
+               drainage: 15, roadDistance: 5, lithology: 5, aspect: 5 },
+    coords: [[12.86,79.78],[12.9,79.82],[12.87,79.85],[12.83,79.8]]
+  }
+];
+
+// -------- MAP SETUP -----------
+
+let map, floodLayerGroup, landslideLayerGroup;
+let selectedZone = null;
+
+function initMap() {
+  map = L.map('map').setView([12.7, 79.85], 11);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+
+  floodLayerGroup = L.layerGroup().addTo(map);
+  landslideLayerGroup = L.layerGroup().addTo(map);
+
+  addFloodZones();
+  addLandslideZones();
+
+  map.on('click', () => {
+    clearLocationInfo();
+  });
+}
+
+function addFloodZones() {
+  floodZones.forEach(zone => {
+    const polygon = L.polygon(zone.coords, {
+      color: 'blue',
+      fillColor: 'rgba(30,144,255,0.4)',
+      weight: 2,
+      fillOpacity: 0.4,
+      className: 'floodZone'
+    }).addTo(floodLayerGroup);
+
+    polygon.on('click', e => {
+      e.originalEvent.stopPropagation();
+      selectedZone = { ...zone, type: 'Flood' };
+      showLocationInfo(selectedZone);
+      addChatMessage('User', `Explain this location: ${zone.name}`);
+      processAIQuery(`Explain this location ${zone.name}`);
+    });
+
+    polygon.bindTooltip(`${zone.name} (Flood Risk: ${zone.risk})`);
+  });
+}
+
+function addLandslideZones() {
+  landslideZones.forEach(zone => {
+    const polygon = L.polygon(zone.coords, {
+      color: 'orangered',
+      fillColor: 'rgba(255,69,0,0.4)',
+      weight: 2,
+      fillOpacity: 0.4,
+      className: 'landslideZone'
+    }).addTo(landslideLayerGroup);
+
+    polygon.on('click', e => {
+      e.originalEvent.stopPropagation();
+      selectedZone = { ...zone, type: 'Landslide' };
+      showLocationInfo(selectedZone);
+      addChatMessage('User', `Explain this location: ${zone.name}`);
+      processAIQuery(`Explain this location ${zone.name}`);
+    });
+
+    polygon.bindTooltip(`${zone.name} (Landslide Susceptibility: ${zone.susceptibility})`);
+  });
+}
+
+function showLocationInfo(zone) {
+  let html = `<h3>${zone.name}</h3>`;
+  if (zone.type === 'Flood') {
+    html += `<p><strong>Flood Risk:</strong> ${zone.risk} (${zone.riskScore}/100)</p>`;
+    html += `<p>Population exposed: ${zone.population.toLocaleString()}<br/>Buildings exposed: ${zone.buildings.toLocaleString()}<br/>Roads exposed: ${zone.roads}<br/>Agricultural land exposed: ${zone.agriculture} sq km<br/>Critical infrastructure exposed: ${zone.infrastructure}</p>`;
+    html += `<p>Area size: ${zone.area} sq km</p>`;
+  } else if (zone.type === 'Landslide') {
+    html += `<p><strong>Landslide Susceptibility:</strong> ${zone.susceptibility} (${zone.suscScore}/100)</p>`;
+    html += `<p>Major risk factors (% contribution):<br/>`;
+    for (const [f, v] of Object.entries(zone.factors)) {
+      html += `• ${capitalize(f)}: ${v}%<br/>`;
+    }
+    html += `</p>`;
+  }
+  html += `<button onclick="askAI('Why is this area high risk?')">Ask AI why high risk</button>`;
+  const panel = document.getElementById('locationInfo');
+  panel.innerHTML = html;
+  panel.style.display = 'block';
+}
+
+function clearLocationInfo() {
+  selectedZone = null;
+  const panel = document.getElementById('locationInfo');
+  panel.style.display = 'none';
+  panel.innerHTML = '';
+  clearHighlights();
+  clearRiskCards();
+}
+
+function highlightZones(zoneIds) {
+  clearHighlights();
+  // Highlight flood zones
+  floodLayerGroup.eachLayer(layer => {
+    const found = floodZones.find(z => {
+      const sameCoords = z.coords.length === layer.getLatLngs()[0].length &&
+                         z.coords.every((c,i) => c[0].toFixed(5)===layer.getLatLngs()[0][i].lat.toFixed(5) && c[1].toFixed(5)===layer.getLatLngs()[0][i].lng.toFixed(5));
+      return zoneIds.includes(z.id) && sameCoords;
+    });
+    if(found) layer.setStyle({weight:4,color:'yellow',fillOpacity:0.6});
+  });
+  // Highlight landslide zones
+  landslideLayerGroup.eachLayer(layer => {
+    const found = landslideZones.find(z => {
+      const sameCoords = z.coords.length === layer.getLatLngs()[0].length &&
+                         z.coords.every((c,i) => c[0].toFixed(5)===layer.getLatLngs()[0][i].lat.toFixed(5) && c[1].toFixed(5)===layer.getLatLngs()[0][i].lng.toFixed(5));
+      return zoneIds.includes(z.id) && sameCoords;
+    });
+    if(found) layer.setStyle({weight:4,color:'yellow',fillOpacity:0.6});
+  });
+}
+
+function clearHighlights() {
+  floodLayerGroup.eachLayer(layer => {
+    layer.setStyle({weight:2,color:'blue',fillOpacity:0.4});
+  });
+  landslideLayerGroup.eachLayer(layer => {
+    layer.setStyle({weight:2,color:'orangered',fillOpacity:0.4});
+  });
+}
+
+function zoomToZones(zoneIds) {
+  let bounds = null;
+  zoneIds.forEach(id => {
+    let zone = floodZones.find(z => z.id === id) || landslideZones.find(z => z.id === id);
+    if(zone){
+      const zoneBounds = L.latLngBounds(zone.coords.map(c => [c[0], c[1]]));
+      bounds = bounds ? bounds.extend(zoneBounds) : zoneBounds;
+    }
+  });
+  if(bounds) map.fitBounds(bounds.pad(0.25));
+}
+
+function addChatMessage(who, text) {
+  const chatLog = document.getElementById('chatLog');
+  const prefix = who === 'User' ? '<b style="color:#0af;">You:</b> ' : '<b style="color:#af0;">GeoShield AI:</b> ';
+  chatLog.innerHTML += prefix + escapeHTML(text) + '\n\n';
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function escapeHTML(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function askAI(message) {
+  const inputBox = document.getElementById('inputBox');
+  inputBox.value = message;
+  sendUserMessage();
+}
+
+function sendUserMessage() {
+  const inputBox = document.getElementById('inputBox');
+  let message = inputBox.value.trim();
+  if(!message) return;
+  addChatMessage('User', message);
+  processAIQuery(message);
+  inputBox.value = '';
+}
+
+function processAIQuery(input) {
+  input = input.toLowerCase();
+  clearLocationInfo();
+  clearRiskCards();
+
+  // Identify zones by name or all
+  const floodAllZones = floodZones.map(z => z.id);
+  const landAllZones = landslideZones.map(z => z.id);
+
+  // Function to find zone by name (case insensitive)
+  function findZoneByName(name) {
+    if(!name) return null;
+    name = name.toLowerCase();
+    return floodZones.find(z=>z.name.toLowerCase()===name) || landslideZones.find(z=>z.name.toLowerCase()===name);
+  }
+
+  // 1. Highest flood risk areas
+  if(input.match(/highest flood risk|high flood risk areas|flood risk zones/)) {
+    const highZones = floodZones.filter(z => z.risk === 'High');
+    if (highZones.length) {
+      highlightZones(highZones.map(z => z.id));
+      zoomToZones(highZones.map(z => z.id));
+      addRiskCards([
+        {title: 'Total High Flood Risk Zones', value: highZones.length},
+        {title: 'Population Exposed', value: highZones.reduce((a,v)=>a+v.population,0).toLocaleString()},
+        {title: 'Total Area (sq km)', value: highZones.reduce((a,v)=>a+v.area,0)}
+      ]);
+      addChatMessage('AI', `The highest flood risk areas are: ${highZones.map(z=>z.name).join(', ')}. Together, these expose approximately ${highZones.reduce((a,v)=>a+v.population,0).toLocaleString()} people over ${highZones.reduce((a,v)=>a+v.area,0)} sq km.`);
+    } else {
+      addChatMessage('AI', "I don't have sufficient data to determine the highest flood risk areas.");
+    }
+    return;
+  }
+
+  // 2. Highest landslide susceptibility areas
+  if(input.match(/highest landslide susceptibility|high landslide risk|landslide zones/)) {
+    const highZones = landslideZones.filter(z => ['very high','high'].includes(z.susceptibility.toLowerCase()));
+    if (highZones.length) {
+      highlightZones(highZones.map(z => z.id));
+      zoomToZones(highZones.map(z => z.id));
+      addRiskCards([
+        {title: 'High Landslide Susceptibility Zones', value: highZones.length},
+        {title: 'Susceptibility Scores', value: highZones.map(z => z.suscScore).join(', ')}
+      ]);
+      addChatMessage('AI', `The areas with highest landslide susceptibility are: ${highZones.map(z=>z.name).join(', ')}.`);
+    } else {
+      addChatMessage('AI', "I don't have sufficient data for landslide susceptibility zones.");
+    }
+    return;
+  }
+
+  // 3. Show exposure info for flood
+  if(input.match(/population exposed|exposed population|buildings exposed|infrastructure exposed/)) {
+    const totalPop = floodZones.reduce((a,v)=>a+v.population,0);
+    const totalBuildings = floodZones.reduce((a,v)=>a+v.buildings,0);
+    const totalInfrastructure = floodZones.reduce((a,v)=>a+v.infrastructure,0);
+    addRiskCards([
+      {title: 'Total Population Exposed (Flood)', value: totalPop.toLocaleString()},
+      {title: 'Total Buildings Exposed (Flood)', value: totalBuildings.toLocaleString()},
+      {title: 'Critical Infrastructure Exposed', value: totalInfrastructure}
+    ]);
+    addChatMessage('AI', `Total population exposed to flood risk is approximately ${totalPop.toLocaleString()} people, with around ${totalBuildings.toLocaleString()} buildings and ${totalInfrastructure} critical infrastructure elements exposed.`);
+    return;
+  }
+
+  // 4. Zone explanation
+  let explName = null;
+  if(input.match(/explain this location|why is .* high risk|describe .*|tell me about .*|what is .* risk/)){
+    // try extract zone name from input
+    let matchedName = input.match(/zone [a-c]|hill area [12]/);
+    if(matchedName) explName = matchedName[0].toLowerCase().replace('zone ', 'Zone ').replace('hill area ', 'Hill Area ');
+    if(!explName && selectedZone) explName = selectedZone.name;
+    if(explName){
+      const zone = findZoneByName(explName);
+      if(zone){
+        highlightZones([zone.id]);
+        zoomToZones([zone.id]);
+        showLocationInfo(zone);
+        let explanation = '';
+        if(zone.type==='Flood' || floodZones.find(z => z.id === zone.id)){
+          explanation = `${zone.name} has a ${zone.risk} flood risk with a score of ${zone.riskScore}/100. Approximately ${zone.population.toLocaleString()} people and ${zone.buildings.toLocaleString()} buildings are exposed here over an area of ${zone.area} sq km.`;
+          addChatMessage('AI', explanation);
+          return;
+        }
+        if(zone.type==='Landslide' || landslideZones.find(z => z.id === zone.id)){
+          explanation = `${zone.name} has ${zone.susceptibility} landslide susceptibility with a score of ${zone.suscScore}/100. Major contributing factors include: `;
+          explanation += Object.entries(zone.factors).map(([k,v]) => `${capitalize(k)} (${v}%)`).join(', ') + '.';
+          addChatMessage('AI', explanation);
+          return;
+        }
+      }
+      else {
+        addChatMessage('AI', "I don't have sufficient data to explain that location.");
+        return;
+      }
+    }
+  }
+
+  // 5. Compare zones
+  if(input.match(/compare.*zone a.*zone b/)){
+    const zoneA = floodZones.find(z => z.id === 'ZoneA');
+    const zoneB = floodZones.find(z => z.id === 'ZoneB');
+    if(zoneA && zoneB){
+      highlightZones([zoneA.id, zoneB.id]);
+      zoomToZones([zoneA.id, zoneB.id]);
+      addRiskCards([
+        {title: `${zoneA.name} Flood Risk Score`, value: zoneA.riskScore},
+        {title: `${zoneB.name} Flood Risk Score`, value: zoneB.riskScore}
+      ]);
+      let reply = `Comparing ${zoneA.name} and ${zoneB.name}:\n`;
+      reply += `${zoneA.name}: Flood Risk - ${zoneA.risk} (${zoneA.riskScore}/100), Population exposed: ${zoneA.population.toLocaleString()}, Buildings: ${zoneA.buildings.toLocaleString()}.\n`;
+      reply += `${zoneB.name}: Flood Risk - ${zoneB.risk} (${zoneB.riskScore}/100), Population exposed: ${zoneB.population.toLocaleString()}, Buildings: ${zoneB.buildings.toLocaleString()}.\n`;
+      reply += `${zoneA.name} exhibits higher risk and exposure compared to ${zoneB.name}.`;
+      addChatMessage('AI', reply);
+    } else {
+      addChatMessage('AI', "I don't have sufficient data to compare Zone A and Zone B.");
+    }
+    return;
+  }
+
+  // 6. Generate risk summary
+  if(input.match(/generate.*risk summary|risk report|summary for the region/)){
+    addRiskCards([
+      {title: 'Total Flood Risk Zones', value: floodZones.length},
+      {title: 'Total Landslide Zones', value: landslideZones.length},
+      {title: 'Population Exposed (Flood)', value: floodZones.reduce((a,v)=>a+v.population,0).toLocaleString()},
+      {title: 'Overall Flood Risk Average', value: Math.round(floodZones.reduce((a,v)=>a+v.riskScore,0)/floodZones.length)}
+    ]);
+    let summary = `Risk Summary Report:\n\nFlood Hazard:\n- ${floodZones.length} zones analyzed with average risk score ${Math.round(floodZones.reduce((a,v)=>a+v.riskScore,0)/floodZones.length)}.\n`;
+    summary += `Landslide Susceptibility:\n- Highest susceptibility zone is ${landslideZones.reduce((max,z)=>z.suscScore>max.suscScore ? z : max, landslideZones[0]).name} (${landslideZones.reduce((max,z)=>z.suscScore>max.suscScore ? z : max, landslideZones[0]).suscScore}/100).\n`;
+    summary += `Population Exposure:\n- Total population exposed to floods is ${floodZones.reduce((a,v)=>a+v.population,0).toLocaleString()}.\n`;
+    summary += `Planning Priorities:\n- Focus on high flood risk zones like Zone A and landslide-prone hills.\n- Protect critical infrastructure and vulnerable populations.\n`;
+    addChatMessage('AI', summary);
+    return;
+  }
+
+  // 7. Why high risk for selected or named zone
+  if(input.match(/why.*high risk/)){
+    let zone = selectedZone || findZoneByName(input.match(/zone [a-c]|hill area [12]/)?.[0]);
+    if(!zone) {
+      addChatMessage('AI', "Please specify a zone or select an area on the map to explain.");
+      return;
+    }
+    highlightZones([zone.id]);
+    zoomToZones([zone.id]);
+    if(zone.type==='Flood'){
+      addChatMessage('AI', `${zone.name} is high risk mainly due to frequent flooding events resulting from heavy rains and proximity to water bodies. The large exposed population (${zone.population.toLocaleString()}) and infrastructure heighten vulnerability.`);
+      showLocationInfo(zone);
+      return;
+    }
+    if(zone.type==='Landslide'){
+      let factorsText = Object.entries(zone.factors).map(([k,v]) => `${capitalize(k)}: ${v}%`).join(', ');
+      addChatMessage('AI', `${zone.name} has very high landslide susceptibility driven by factors like steep slope, heavy rainfall, and land use patterns. Factor contributions include: ${factorsText}.`);
+      showLocationInfo(zone);
+      return;
+    }
+    addChatMessage('AI', "I don't have enough data to explain the high risk for this area.");
+    return;
+  }
+
+  // Default fallback
+  addChatMessage('AI', "I don't have sufficient data to answer that. Please ask about hazards, zones like 'Zone A', or exposure.");
+}
+
+// Risk cards for showing key stats
+function addRiskCards(cards) {
+  const container = document.getElementById('riskCards');
+  container.innerHTML = '';
+  cards.forEach(c => {
+    const card = document.createElement('div');
+    card.className = 'risk-card';
+    card.innerHTML = `<strong>${c.title}</strong><div class="value">${c.value}</div>`;
+    container.appendChild(card);
+  });
+}
+
+function clearRiskCards() {
+  document.getElementById('riskCards').innerHTML = '';
+}
+
+function capitalize(str){
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+// UI event bindings
+document.getElementById('sendBtn').onclick = sendUserMessage;
+document.getElementById('inputBox').addEventListener('keypress', e => {
+  if(e.key === 'Enter'){
+    sendUserMessage();
+  }
+});
+
+initMap();
+</script>
+</body>
+</html>
